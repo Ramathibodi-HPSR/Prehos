@@ -2,3 +2,5 @@
 .DS_Store
 /data
 .Rproj.user
+/.venv
+/audio
