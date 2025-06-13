@@ -1,7 +1,6 @@
-
 .DS_Store
+.pyc
 /data
-.Rproj.user
 /.venv
 /audio
-.pyc
+/output

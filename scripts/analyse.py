@@ -4,7 +4,7 @@ Data Analysis and Statistical Utilities
 This script provides tools for analyzing datasets, calculating statistical metrics, and generating detailed reports. It includes functionality for descriptive statistics, hypothesis testing, and inequality indices, as well as tools for formatting results into a readable document format (e.g., DOCX).
 
 Key functionalities include:
-- Perfroming the mean and proportional differences
+- Performing the mean and proportional differences
 - Performing the regression
 - Performing the analysis for missing data
 - Reporting the result for descriptive and analytical analysis
@@ -16,7 +16,7 @@ Dependencies:
 
 Usage:
 1. Import the functions into your main script or notebook.
-2. ...
+2. Perform statistical analysis as needed.
 
 Authors: P Sitthirat et al
 Version: 1.0
@@ -429,52 +429,6 @@ class Difference:
         interpretation = Difference.interpret_effect_size(corr, 'corr')
         return corr, pvalue, interpretation
         
-class Missing:
-    """
-    A class for missing analysis
-    """
-
-    @staticmethod
-    def missing_visualize(df, df_name=None):
-        """
-        Visualize missing data using heatmap.
-
-        Parameters:
-        - df (DataFrame): The input dataset for analyse.
-        """
-        
-        plt.figure(figsize=(12, 6))
-        sns.heatmap(df.isnull(), cbar=False, cmap="viridis")
-        plt.title(f"Missing Data Heatmap: {df_name}")
-        plt.show()
-
-    @staticmethod
-    def mcar(df_input, alpha=0.05):
-        """
-        Test that the missing data is Missing Completely at Random (MCAR)
-        
-        Parameters:
-        - df (DataFrame): The input dataset for analyse.
-        """
-
-        df = df_input.copy()
-        df.columns = ['x' + str(i) for i in range(df.shape[1])]
-        df['missing'] = np.sum(df.isnull(), axis=1)
-        n = df.shape[0]
-        k = df.shape[1] - 1
-        f = k * (k - 1) / 2
-        chi2_crit = stats.chi2.ppf(1 - alpha, f)
-        chi2_val = ((n - 1 - (k - 1) / 2) ** 2) / (k - 1) / ((n - k) * np.mean(df['missing']))
-        p_val = 1 - stats.chi2.cdf(chi2_val, f)
-        if chi2_val > chi2_crit:
-            print(
-                'Reject null hypothesis: Data is not MCAR (p-value={:.4f}, chi-square={:.4f})'.format(p_val, chi2_val)
-            )
-        else:
-            print(
-                'Do not reject null hypothesis: Data is MCAR (p-value={:.4f}, chi-square={:.4f})'.format(p_val, chi2_val)
-            )
-
 class Descriptive:
     """
     A class for descriptive analysis
@@ -608,13 +562,10 @@ class Regression:
     """
 
     @staticmethod
-    def binary_logistic(df, independent_var, dependent_var, independent_assign=None, dependent_assign=None, table_name=None, export_result=False, vif_threshold = 5):
+    def logistic(df, independent_var, dependent_var, independent_assign=None, dependent_assign=None, table_name=None, export_result=False, vif_threshold = 5):
         
         # Drop missing values
         df_test = df[[dependent_var] + independent_var].dropna()
-
-        # Ensure the dependent variable is categorical
-        df_test[dependent_var] = df_test[dependent_var].astype('category')
         
         # Conduct colinearity testing
         cat_vars = df_test[independent_var].select_dtypes(include=['object', 'category']).columns.tolist()
@@ -638,42 +589,45 @@ class Regression:
         
             # Prepare data
             X = sm.add_constant(df_test[independent_var])  # Add intercept term        
-            if pd.notna(dependent_assign):
-                df_test[dependent_var] = df_test[dependent_var].apply(lambda x: 1 if x == dependent_assign else 0).astype(int)
-                y = df_test[dependent_var]
+            if isinstance(dependent_assign, str):
+                df_test[dependent_var] = df_test[dependent_var].apply(
+                    lambda x: 1 if x == dependent_assign else 0
+                ).astype(int)
+                n_outcome = 2
+            # Explicit list of allowed classes (optional support for future extension)
+            elif isinstance(dependent_assign, list):
+                df_test = df_test[df_test[dependent_var].isin(dependent_assign)].copy()
+                df_test[dependent_var] = pd.Categorical(df_test[dependent_var], categories=dependent_assign)
+                df_test[dependent_var] = df_test[dependent_var].cat.codes
+                n_outcome = len(dependent_assign)
             else:
-                y = df_test[dependent_var].cat.codes  # Convert categorical to numerical codes
+                n_outcome = len(df_test[dependent_var].unique())
+                df_test[dependent_var] = pd.Categorical(df_test[dependent_var])
+                df_test[dependent_var] = df_test[dependent_var].cat.codes
             
+            if n_outcome < 2:
+                print('Outcome have less than 2 values. Logistic Regression cannot be performed.')
+                return
+            if n_outcome == 2:
+                print('Binary Logistic Regression:')
+            elif n_outcome > 2:
+                print('Multinomial Logistic Regression:')
             
-            if len(independent_var) == 1:
-                var = independent_var[0]
+            summary_df = pd.DataFrame()
+            
+            # # Univariate analysis
+            for var in independent_var:
+                
                 if independent_assign and var in independent_assign:
                     independent_part = f"C({var}, Treatment(reference='{independent_assign[var]}'))"
                 else:
                     independent_part = var
-                
+            
                 formula = f"{dependent_var} ~ {independent_part}"
                 
-                model = smf.logit(formula, df_test).fit(disp=0)
-                summary = model.summary().tables[1]
-                summary_df = pd.DataFrame(summary)
-            
-            else:    
-                
-                summary_df = pd.DataFrame()
-                
-                # Univariate analysis
-                for var in independent_var:
-                    
-                    if independent_assign and var in independent_assign:
-                        independent_part = f"C({var}, Treatment(reference='{independent_assign[var]}'))"
-                    else:
-                        independent_part = var
-                
-                    formula = f"{dependent_var} ~ {independent_part}"
-                    
+                if n_outcome == 2:
                     model = smf.logit(formula, df_test).fit(disp=0)
-                    
+                                           
                     # Create a clean DataFrame
                     result_df = pd.DataFrame({
                         "predictor": model.params.index,  # Variable names
@@ -684,24 +638,25 @@ class Regression:
                         "0.975]": np.round(np.exp(model.conf_int()[1]).values, 2)   # Upper bound of CI in OR
                     })
                     result_df = result_df[result_df["predictor"] != "Intercept"]
-                    
+                
                     # Append results to summary_df
                     summary_df = pd.concat([summary_df, result_df], ignore_index=True)
-                
+            
+            # Multivariate analysis
 
-                # Multivariate analysis
-                
-                # Construct formula for logistic regression
-                formula_parts = []    
-                for var in independent_var:
-                    if independent_assign and var in independent_assign:  # If variable has a reference group
-                        formula_parts.append(f"C({var}, Treatment(reference='{independent_assign[var]}'))")
-                    else:  # Otherwise, include normally
-                        formula_parts.append(var)
-                multivar_formula = f"{dependent_var} ~ " + " + ".join(formula_parts)  # Ensure no extra '+'
+            formula_parts = []    
+            
+            for var in independent_var:
+                if independent_assign and var in independent_assign:  # If variable has a reference group
+                    formula_parts.append(f"C({var}, Treatment(reference='{independent_assign[var]}'))")
+                else:  # Otherwise, include normally
+                    formula_parts.append(var)
+                    
+            multivar_formula = f"{dependent_var} ~ " + " + ".join(formula_parts)  # Ensure no extra '+'
+            
+            if n_outcome == 2:
                 
                 model = smf.logit(multivar_formula, df_test).fit(disp=0)
-                print(model.summary())
                 
                 result_df = pd.DataFrame({
                     "predictor": model.params.index,  # Variable names
@@ -711,588 +666,63 @@ class Regression:
                     "[0.025": np.round(np.exp(model.conf_int()[0]).values, 2),  # Lower bound of CI in OR
                     "0.975]": np.round(np.exp(model.conf_int()[1]).values, 2)   # Upper bound of CI in OR
                 })
-                result_df = result_df[result_df["predictor"] != "Intercept"]
-                    
-                summary_df = pd.merge(summary_df, result_df, how='left', on='predictor')
+                result_df = result_df[result_df["predictor"] != "Intercept"]    
+               
+            elif n_outcome > 2:
                 
-            print(tabulate(summary_df, showindex=False, headers="keys"))
-            if export_result == True:
-                ResultExport.add_to_docx(summary_df, table_name, output_dir='output/analyse')
-        
-        # coef = summary_df.loc[independent_var, 'Coef.']
-        # conf_25 = summary_df.loc[independent_var, '[0.025']  # Lower bound of 95% CI
-        # conf_975 = summary_df.loc[independent_var, '0.975]']  # Upper bound of 95% CI
-        # significant_coeffs = (((conf_25 < 0) & (conf_975 > 0)) | ((conf_25 > 0) & (conf_975 < 0)))
+                model = smf.mnlogit(multivar_formula, df_test).fit(disp=0)      
+               
+                print(f"Pseudo R-squ.: {model.prsquared:.2f}")
+                print(f"Log-Likelihood: {model.llf:.2f}")
+                print(f"LL-Null: {model.llnull:.2f}")
+                print(f"LLR p-value: {model.llr_pvalue:.2f}")
+                
+                # Extract model outputs
+                params = model.params           # (predictors x outcomes)
+                pvals = model.pvalues
+                conf_int = model.conf_int()     # Must have 'lower', 'upper' columns
 
-        # # Determine if binary or multinomial logistic regression is required
-        # if len(df_test[dependent_var].cat.categories) == 2:
-        #     test = "Binary Logistic Regression"
-        #     model = sm.Logit(y, X)
-        # elif (len(df_test[dependent_var].cat.categories) > 2) & (len(df_test[dependent_var].cat.categories) <= 20):
-        #     test = "Multinomial Logistic Regression"
-        #     model = sm.MNLogit(y, X)
-        # else:
-        #     model = None
-        #     print(f"Dependent variable ({dependent_var}) must have at least two categories and no more than 20 categories.")
+                # Reshape params to long form
+                param_long = params.stack().reset_index()
+                param_long.columns = ['predictor', 'outcome', 'coef (log OR)']
+                param_long['coef (log OR)'] = np.round(param_long['coef (log OR)'], 3)
+                param_long['OR'] = np.round(np.exp(param_long['coef (log OR)']), 3)
+
+                # Reshape p-values
+                pval_long = pvals.stack().reset_index()
+                pval_long.columns = ['predictor', 'outcome', 'P>|z|']
+                pval_long['P>|z|'] = np.round(pval_long['P>|z|'], 3)
+
+                # Reshape confidence intervals
+                conf_long = conf_int.stack().reset_index()
+                conf_long.columns = ['outcome', 'predictor', 'bound', 'value']
+                conf_long['value'] = np.round(np.exp(conf_long['value']), 3)
+
+                # Pivot to wide form for CI
+                conf_wide = conf_long.pivot(index=['predictor', 'outcome'], columns='bound', values='value').reset_index()
+                conf_wide.columns.name = None
+                conf_wide.rename(columns={'lower': '[0.025', 'upper': '0.975]'}, inplace=True)
+                conf_wide['[0.025'] = np.round(conf_wide['[0.025'], 3)
+                conf_wide['0.975]'] = np.round(conf_wide['0.975]'], 3)
+                conf_wide['outcome'] = conf_wide['outcome'].astype(int) - 1
                 
-        # if model is not None:
+
+                # Ensure consistent dtype for merging
+                outcome_labels = dependent_assign[1:]
+                param_long['outcome'] = param_long['outcome'].astype(int).map(dict(enumerate(outcome_labels)))
+                pval_long['outcome'] = pval_long['outcome'].astype(int).map(dict(enumerate(outcome_labels)))
+                conf_wide['outcome'] = conf_wide['outcome'].astype(int).map(dict(enumerate(outcome_labels)))
+
+                # Merge all components
+                result_df = param_long.merge(pval_long, on=['predictor', 'outcome']).merge(conf_wide, on=['predictor', 'outcome'])
+                result_df = result_df.sort_values(['outcome', 'predictor'])
+                result_df = result_df[['outcome', 'predictor', 'coef (log OR)', 'OR', 'P>|z|', '[0.025', '0.975]']]
+        
+        summary_df = result_df.copy()       
+        # summary_df = pd.merge(summary_df, result_df, how='left', on='predictor', suffixes=('', '_multivar'))
             
-        #     # Fit the model
-        #     fit = model.fit(disp=False)
+        print(tabulate(summary_df, showindex=False, headers="keys"))
+        if export_result == True:
+            ResultExport.add_to_docx(summary_df, table_name, output_dir='output/analyse')
 
-        #     # Extract coefficients, p-values, and confidence intervals
-        #     summary = fit.summary2().tables[1]
-        #     summary_df = pd.DataFrame(summary)
-                       
-        #     if test == "Binary Logistic Regression":
-        #         p_value = summary_df.loc[independent_var, 'P>|z|']  # Use 'P>|z|' for binary logistic regression
-        #     elif test == "Multinomial Logistic Regression":
-        #         p_value = summary_df.loc[independent_var, 'P>|t|']  # Use 'P>|t|' for multinomiallogistic regression
-            
-
-        #     if significant_coeffs:
-        #         effect_size = None
-        #         interpretation = 'Negligible'
-        #     else:
-        #         effect_size = coef
-        #         interpretation = Difference.interpret_effect_size(effect_size, 'odd')
-
-        #     if export_as == 'parameters':
-        #         return p_value, effect_size, test, interpretation
-        #     elif export_as == 'table':
-        #         return summary_df
-        #     else:
-        #         raise ValueError("Invalid export_as value. Use 'parameters' or 'table'.")
-        
-        # else:
-        #     p_value = None
-        #     effect_size = None
-        #     test = "Not performed any test due to number of categories"
-        #     interpretation = None
-        #     return p_value, effect_size, test, interpretation
-
-
-# def cronbach_alpha(df):
-    
-#     # Number of items
-#     n_items = df.shape[1]
-    
-#     # Variance of each item
-#     item_variances = df.var(axis=0, ddof=1)
-    
-#     # Variance of the total score
-#     total_score_variance = df.sum(axis=1).var(ddof=1)
-    
-#     # Cronbach's alpha formula
-#     alpha = (n_items / (n_items - 1)) * (1 - (item_variances.sum() / total_score_variance))
-    
-#     return alpha
-
-
-def logistic_regression(df_input, outcome_column, outcome_choice, predictors, reference_group=None, multivariate=False):
-    
-    df = df_input.copy()
-    df = df[predictors + [outcome_column]]
-
-    table_name = f"logis_{outcome_choice}_vs_others"
-    print(f"Logistic regression analysis for {outcome_choice} as outcome")
-
-    # Create a binary outcome based on the user's choice
-    df['outcome'] = df[outcome_column].apply(lambda x: 1 if x == outcome_choice else 0)
-
-    # Ensure predictors are numeric and handle categorical data
-    categorical_predictors = df[predictors].select_dtypes(include=['object', 'category']).columns.tolist()
-    
-    # Handling reference group before creating dummies
-    if reference_group:
-        for predictor, ref_value in reference_group.items():
-            if predictor in categorical_predictors:
-                df[predictor] = pd.Categorical(df[predictor], categories=[ref_value] + [x for x in df[predictor].unique() if x != ref_value], ordered=True)     
-
-    df = pd.get_dummies(df, columns=categorical_predictors, drop_first=True)
-    df = df.applymap(lambda x: int(x) if isinstance(x, bool) else x)
-
-    # Determine final list of predictors including dummy variables
-    predictors_dummies = []
-    for predictor in predictors:
-        if predictor in categorical_predictors:
-            
-            ref_value = reference_group.get(predictor)
-            # Add a reference row for the original category
-            ref_row = {
-                "Variables": f"{predictor}_{ref_value}",
-                "u-var OR": "reference",
-                "u-var 95% CI" : "",
-                "p-value": "",
-                "m-var OR": "reference",
-                "m-var 95% CI": "",
-                "m-var p-value": ""
-            }
-            predictors_dummies.append(ref_row)
-            # Add all dummy columns corresponding to this categorical predictor
-            dummies = df.columns[df.columns.str.startswith(predictor)]
-            predictors_dummies.extend(dummies)
-        else:
-            predictors_dummies.append(predictor)
-    
-    results = []
-
-    warnings.filterwarnings("ignore", category=ConvergenceWarning)
-
-    # Univariate analysis
-    for predictor in predictors_dummies:
-        if isinstance(predictor, str):  # Exclude the reference row
-            X = df[[predictor]]
-            X = sm.add_constant(X)
-            y = df['outcome']
-            try:
-                model = sm.Logit(y, X)
-                result = model.fit(disp=0)  # Suppress output
-                
-                coef = np.exp(result.params[predictor])
-                conf = np.exp(result.conf_int().loc[predictor])
-                pvalue = result.pvalues[predictor]
-                ci = f"{conf[0]:.2f}, {conf[1]:.2f}"
-                row = {
-                    "Variables": predictor,
-                    "u-var OR": f"{coef:.2f}",
-                    "u-var 95% CI" : ci,
-                    "p-value": f"{pvalue:.3f}",
-                    "m-var OR": "",
-                    "m-var 95% CI": "",
-                    "m-var p-value": ""
-                }
-                results.append(row)
-            except Exception as e:
-                print(f"Error fitting univariate model for {predictor}: {e}")
-                continue
-        else:
-            # Append reference row as is
-            results.append(predictor)
-
-    # Multivariate analysis
-    if multivariate:
-        X = df[[pred for pred in predictors_dummies if isinstance(pred, str)]]
-        X = sm.add_constant(X)
-        y = df['outcome']
-        try:
-            model = sm.Logit(y, X)
-            result = model.fit(disp=0)  # Suppress output
-
-            for predictor in predictors_dummies:
-                if isinstance(predictor, str):  # Exclude the reference row
-                    coef = np.exp(result.params[predictor])
-                    conf = np.exp(result.conf_int().loc[predictor])
-                    pvalue = result.pvalues[predictor]
-                    ci = f"{conf[0]:.2f}, {conf[1]:.2f}"
-                    
-                    # Find the row in the results and update it
-                    for row in results:
-                        if row["Variables"] == predictor:
-                            row["m-var OR"] = f"{coef:.2f}"
-                            row['m-var 95% CI'] = ci
-                            row["m-var p-value"] = f"{pvalue:.3f}"
-                            break
-        except Exception as e:
-            print(f"Error fitting multivariate model: {e}")
-
-    # Display the results
-    print(tabulate(results, headers="keys"))
-    add_to_docx(results, table_name, output_dir='output/analyse')
-
-# import pandas as pd
-# import statsmodels.api as sm
-# import matplotlib.pyplot as plt
-
-# import pandas as pd
-# import statsmodels.api as sm
-# import matplotlib.pyplot as plt
-
-# def interrupted_time_series(df_input, time_column, outcome_column=None, intervention_point=None, 
-#                             control_columns=None, time_unit='date', show_summary=True, plot=True, ax=None, point_size=None, 
-#                             title='Title', axis_label_size=14, title_size=16, tick_label_size=12, line_width=2, y_lim=None, first_col=False,
-#                             counterfactual_line=True):
-#     """
-#     Perform Interrupted Time Series analysis.
-    
-#     Parameters:
-#     - df: pd.DataFrame, the data containing the time series.
-#     - time_column: str, the column name representing time.
-#     - outcome_column: str, optional, the column name representing the outcome variable. If None, use counts.
-#     - intervention_point: int/str/datetime, optional, the time point at which the intervention occurred.
-#     - control_columns: list of str, optional, names of control variables.
-#     - time_unit: str, optional, the unit of time ('minute', 'hour', 'day', 'month', etc.). Default is 'day'.
-#     - plot: bool, optional, whether to plot the time series and regression lines.
-    
-#     Returns:
-#     - results: Regression results summary from statsmodels.
-#     """
-
-#     df = df_input.copy()
-
-#     # Convert the time column to a datetime format
-#     df[time_column] = pd.to_datetime(df[time_column], errors='coerce')
-    
-#     # Check for any non-datetime values and handle them (e.g., drop or fill with a default value)
-#     if df[time_column].isnull().any():
-#         print(f"Warning: {df[time_column].isnull().sum()} non-datetime entries found in {time_column}. These will be dropped.")
-#         df = df.dropna(subset=[time_column])
-    
-#     # Manipulate the time column based on the specified time unit
-#     if time_unit == 'date':
-#         df[time_column] = df[time_column].dt.floor('D')  # Only keep the date part
-#     elif time_unit == 'month':
-#         df[time_column] = df[time_column].dt.to_period('M').dt.to_timestamp()  # Keep only month and year
-#     elif time_unit == 'year':
-#         df[time_column] = df[time_column].dt.to_period('Y').dt.to_timestamp()  # Keep only the year
-#     # For 'minute', 'hour', 'week', and other time units, no further manipulation is needed
-    
-#     if outcome_column is None:
-#         df = df.groupby(time_column).size().reset_index(name='outcome')
-#         outcome_column = 'outcome'
-#     else:
-#         df = df.groupby(time_column).agg({outcome_column: 'mean'}).reset_index()
-    
-#     # Create time variable based on the specified time unit
-#     time_conversion = {
-#         'minute': 'T',
-#         'hour': 'H',
-#         'date': 'D',
-#         'week': 'W',
-#         'month': 'M',
-#         'year': 'Y'
-#     }
-#     df['time'] = df[time_column].dt.to_period(time_conversion.get(time_unit, 'D')).astype(str)
-#     df['time'] = pd.to_datetime(df['time']).rank(method='first').astype(int)
-
-#     # Set the intervention point
-#     if intervention_point is not None:
-#         if isinstance(intervention_point, str) or isinstance(intervention_point, pd.Timestamp):
-#             intervention_point = df[df[time_column] >= pd.to_datetime(intervention_point)].iloc[0]['time']
-
-#     # Create pre- and post-intervention indicators
-#     df['intervention'] = (df['time'] >= intervention_point).astype(int) if intervention_point else 0
-    
-#     # Create time after intervention variable
-#     df['time_after_intervention'] = df['time'] - df['time'][df['intervention'] == 1].min()
-#     df['time_after_intervention'] = df['time_after_intervention'].apply(lambda x: x if x >= 0 else 0)
-    
-#     # Create design matrix
-#     X = sm.add_constant(df[['time', 'intervention', 'time_after_intervention']])
-    
-#     # Include control variables if provided
-#     if control_columns:
-#         X = sm.add_constant(df[['time', 'intervention', 'time_after_intervention'] + control_columns])
-    
-#     # Fit the model
-#     model = sm.OLS(df[outcome_column], X)
-#     results = model.fit()
-    
-#     if show_summary:
-#         print(results.summary())
-    
-#     if plot:
-        
-#         if ax is None:
-#             fig, ax = plt.subplots(figsize=(10, 6))
-        
-#         # Plot the time series with intervention
-#         ax.scatter(df['time'], df[outcome_column], label='Outcome', color='grey', alpha=0.5, s=point_size)
-        
-#         if intervention_point:
-#             ax.axvline(x=df['time'][df['time'] == intervention_point].iloc[0], color='red', linestyle='--', label='Intervention Point', linewidth=line_width)
-        
-#         if counterfactual_line and intervention_point:
-#             # Create the counterfactual line by extending the pre-intervention trend
-#             pre_intervention_model = sm.OLS(df[outcome_column][df['time'] < intervention_point], 
-#                                             sm.add_constant(df[['time']][df['time'] < intervention_point])).fit()
-#             df['counterfactual'] = pre_intervention_model.predict(sm.add_constant(df[['time']]))
-#             ax.plot(df['time'], df['counterfactual'], label='Counterfactual', color='green', linestyle='--', linewidth=line_width)
-        
-#         df['predicted'] = results.predict(X)
-#         ax.plot(df['time'], df['predicted'], label='Fitted values', color='blue', linewidth=line_width)
-#         if y_lim is not None:  # Only set y_lim if it is provided
-#             ax.set_ylim(0, y_lim)
-#         ax.set_xlabel(time_unit, fontsize=axis_label_size)
-#         if first_col:
-#             ax.set_ylabel(outcome_column, fontsize=axis_label_size)
-#         ax.set_title(title, fontsize=title_size)
-#         ax.tick_params(axis='both', labelsize=tick_label_size)
-#         ax.grid(True)
-    
-#     return results
-
-
-# def interrupted_time_series_with_counterfactual(df_input, time_column, outcome_column=None, intervention_point=None, 
-#                                                                   split_point=None, control_columns=None, time_unit='date', 
-#                                                                   show_summary=True, plot=True, ax=None, point_size=10, 
-#                                                                   title='Title', axis_label_size=14, title_size=16, 
-#                                                                   tick_label_size=12, line_width=2, y_lim=(0,1), first_col=False,
-#                                                                   counterfactual_postanalysis=True):
-#     """
-#     Perform Interrupted Time Series analysis with a split for counterfactual comparison and additional post-intervention regression.
-    
-#     Parameters:
-#     - df_input: pd.DataFrame, the data containing the time series.
-#     - time_column: str, the column name representing time.
-#     - outcome_column: str, optional, the column name representing the outcome variable. If None, use counts.
-#     - intervention_point: int/str/datetime, optional, the time point at which the intervention occurred.
-#     - split_point: int/str/datetime, optional, the time point at which to split the data for counterfactual comparison.
-#     - control_columns: list of str, optional, names of control variables.
-#     - time_unit: str, optional, the unit of time ('minute', 'hour', 'day', 'month', etc.). Default is 'day'.
-#     - plot: bool, optional, whether to plot the time series and regression lines.
-#     - counterfactual_line: bool, optional, whether to plot the counterfactual (pre-intervention trend) in the post-intervention period.
-
-#     Returns:
-#     - results_pre_split: Regression results summary from pre-split analysis.
-#     - results_post_split: Regression results summary from post-split analysis.
-#     """
-
-#     df = df_input.copy()
-
-#     # Convert the time column to a datetime format
-#     df[time_column] = pd.to_datetime(df[time_column], errors='coerce')
-    
-#     # Check for any non-datetime values and handle them (e.g., drop or fill with a default value)
-#     if df[time_column].isnull().any():
-#         print(f"Warning: {df[time_column].isnull().sum()} non-datetime entries found in {time_column}. These will be dropped.")
-#         df = df.dropna(subset=[time_column])
-    
-#     # Manipulate the time column based on the specified time unit
-#     if time_unit == 'date':
-#         df[time_column] = df[time_column].dt.floor('D')  # Only keep the date part
-#     elif time_unit == 'month':
-#         df[time_column] = df[time_column].dt.to_period('M').dt.to_timestamp()  # Keep only month and year
-#     elif time_unit == 'year':
-#         df[time_column] = df[time_column].dt.to_period('Y').dt.to_timestamp()  # Keep only the year
-#     # For 'minute', 'hour', 'week', and other time units, no further manipulation is needed
-    
-#     if outcome_column is None:
-#         df = df.groupby(time_column).size().reset_index(name='outcome')
-#         outcome_column = 'outcome'
-#     else:
-#         df = df.groupby(time_column).agg({outcome_column: 'mean'}).reset_index()
-    
-#     # Create time variable based on the specified time unit
-#     time_conversion = {
-#         'minute': 'T',
-#         'hour': 'H',
-#         'date': 'D',
-#         'week': 'W',
-#         'month': 'M',
-#         'year': 'Y'
-#     }
-#     # Get the maximum and minimum time
-#     max_time = df[time_column].max()
-#     min_time = df[time_column].min()
-
-#     # Create the time range DataFrame
-#     its_time_range = pd.date_range(start=min_time, end=max_time, freq=time_conversion.get(time_unit, 'D'))
-#     its_df = pd.DataFrame({time_column: its_time_range})
-#     its_df['time'] = its_df[time_column].dt.to_period(time_conversion.get(time_unit, 'D')).astype(str)
-#     its_df['time'] = pd.to_datetime(its_df['time']).rank(method='first').astype(int)
-    
-#     its_df = pd.merge(its_df, df[[time_column, outcome_column]], how='left', on=time_column)
-
-#     # Set the intervention point
-#     if intervention_point is not None:
-#         if isinstance(intervention_point, str) or isinstance(intervention_point, pd.Timestamp):
-#             intervention_point = its_df[its_df[time_column] >= pd.to_datetime(intervention_point)].iloc[0]['time']
-
-#     # Set the split points
-#     if split_point is not None:
-#         if isinstance(split_point, (tuple, list)) and len(split_point) == 2:
-#             start_gap = pd.to_datetime(split_point[0])
-#             end_gap = pd.to_datetime(split_point[1])
-#         else:
-#             raise ValueError("split_point must be a tuple or list with two elements: (start_gap, end_gap)")
-    
-#     # Split the data into pre-split and post-split groups
-#     df_pre_split = its_df[its_df[time_column] <= start_gap].copy()
-#     counterfactual_split = its_df[its_df[time_column] > start_gap].copy()
-#     df_post_split = its_df[its_df[time_column] >= end_gap].copy()
-    
-#     # Perform ITS on the pre-split data
-#     df_pre_split['intervention'] = (df_pre_split['time'] >= intervention_point).astype(int) if intervention_point else 0
-#     df_pre_split['time_after_intervention'] = df_pre_split['time'] - df_pre_split['time'][df_pre_split['intervention'] == 1].min()
-#     df_pre_split['time_after_intervention'] = df_pre_split['time_after_intervention'].apply(lambda x: x if x >= 0 else 0)
-
-#     # Create design matrix for pre-split data
-#     X_pre_split = sm.add_constant(df_pre_split[['time', 'intervention', 'time_after_intervention']])
-    
-#     # Include control variables if provided
-#     if control_columns:
-#         X_pre_split = sm.add_constant(df_pre_split[['time', 'intervention', 'time_after_intervention'] + control_columns])
-    
-#     # Fit the model on pre-split data
-#     model_pre_split = sm.OLS(df_pre_split[outcome_column], X_pre_split)
-#     results_pre_split = model_pre_split.fit()
-    
-#     if show_summary:
-#         print("ITS Analysis for Pre-Split Data:")
-#         print(results_pre_split.summary())
-    
-#     # Calculate the predicted values for the pre-split data
-#     df_pre_split['predicted'] = results_pre_split.predict(X_pre_split)
-    
-#     # Predict the counterfactual trend for the post-split data using pre-split model
-#     if counterfactual_postanalysis:
-#         # Prepare the counterfactual data
-#         counterfactual_split['intervention'] = 1  # No intervention is considered in the counterfactual scenario
-#         counterfactual_split['time_after_intervention'] = counterfactual_split['time'] - intervention_point
-#         counterfactual_split['time_after_intervention'] = counterfactual_split['time_after_intervention'].apply(lambda x: x if x >= 0 else 0)
-        
-#         b0 = results_pre_split.params['const']
-#         b1 = results_pre_split.params['time']
-#         b2 = results_pre_split.params['intervention']
-#         b3 = results_pre_split.params['time_after_intervention']
-
-#         counterfactual_split['counterfactual'] = b0 + (b1 * counterfactual_split['time']) + (b2) + (b3 * counterfactual_split['time_after_intervention'])
-    
-#     if not df_post_split.empty:
-        
-#         # Rank the time column to ensure it's in an integer format
-#         df_post_split['time'] = pd.to_datetime(df_post_split['time']).rank(method='first').astype(int)
-#         df_post_split[outcome_column].fillna(0, inplace=True)
-#         X_post_split = sm.add_constant(df_post_split[['time']])
-        
-#         # Fit the linear regression model
-#         model_post_split = sm.OLS(df_post_split[outcome_column], X_post_split).fit()
-                
-#         # Generate the predicted values from the linear regression model
-#         df_post_split['predicted_post'] = model_post_split.fittedvalues
-#         df_post_split['time'] = df_post_split[time_column].apply(lambda x: (x.date() - min_time.date()).days)
-    
-#     if plot:
-        
-#         if ax is None:
-#             fig, ax = plt.subplots(figsize=(10, 6))
-        
-#         # Plot the actual outcome as a scatter plot with grey color and 50% opacity
-#         ax.scatter(its_df['time'], its_df[outcome_column], label='Outcome', color='grey', alpha=0.5, s=point_size)
-        
-#         if intervention_point:
-#             ax.axvline(x=its_df['time'][its_df['time'] == intervention_point].iloc[0], color='red', linestyle='--', label='Intervention Point', linewidth=line_width)
-        
-#         # Plot the fitted values from the pre-split data
-#         ax.plot(df_pre_split['time'], df_pre_split['predicted'], label='Fitted values (Pre-Split)', color='blue', linewidth=line_width)
-        
-#         if counterfactual_postanalysis and not df_post_split.empty:
-#             # Plot the counterfactual line for post-split data
-#             ax.plot(counterfactual_split['time'], counterfactual_split['counterfactual'], label='Counterfactual (Post-Analysis)', color='green', linestyle='--', linewidth=line_width)
-        
-#         if not df_post_split.empty:
-#             # Plot the post-split regression line
-#             ax.plot(df_post_split['time'], df_post_split['predicted_post'], label='Fitted values (Post-Split)', color='purple', linewidth=line_width)
-        
-#         ax.set_ylim(y_lim)
-        
-#         # Set axis labels and title with specified font sizes
-#         ax.set_xlabel(time_unit, fontsize=axis_label_size)
-#         if first_col:
-#             ax.set_ylabel(outcome_column, fontsize=axis_label_size)
-#         ax.set_title(title, fontsize=title_size)
-        
-#         # Set the size of the tick labels
-#         ax.tick_params(axis='x', labelsize=tick_label_size)
-#         ax.tick_params(axis='y', labelsize=tick_label_size)
-        
-#         ax.grid(True)
-
-
-#     return results_pre_split
-
-
-
-
-
-
-
-# from sklearn.ensemble import RandomForestClassifier
-# from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
-# from sklearn.model_selection import train_test_split
-# from sklearn.preprocessing import LabelEncoder
-# import pandas as pd
-# import numpy as np
-# import warnings
-
-# def encode_categorical_columns(df, columns):
-#     """Encode categorical columns with label encoding."""
-#     label_encoders = {}
-#     for col in columns:
-#         le = LabelEncoder()
-#         df[col] = le.fit_transform(df[col].astype(str))  # Ensure all data is string before encoding
-#         label_encoders[col] = le
-#     return df, label_encoders
-
-# def random_forest(df_input, outcome_column, outcome_choice, predictors, reference_group=None, test_size=0.2, random_state=42):
-    
-#     df = df_input.copy()
-#     df = df[predictors + [outcome_column]]
-
-#     table_name = f"random_forest_{outcome_choice}_vs_others"
-#     print(f"Random Forest analysis for {outcome_choice} as outcome")
-
-#     # Encode the outcome column
-#     le_outcome = LabelEncoder()
-#     df['outcome'] = le_outcome.fit_transform(df[outcome_column].astype(str))
-
-#     # Print classes in the outcome for reference
-#     print(f"Outcome encoding: {dict(zip(le_outcome.classes_, le_outcome.transform(le_outcome.classes_)))}")
-
-#     # Ensure predictors are numeric and handle categorical data
-#     categorical_predictors = df[predictors].select_dtypes(include=['object', 'category']).columns.tolist()
-
-#     # Handling reference group before encoding
-#     if reference_group:
-#         for predictor, ref_value in reference_group.items():
-#             if predictor in categorical_predictors:
-#                 df[predictor] = pd.Categorical(df[predictor], categories=[ref_value] + [x for x in df[predictor].unique() if x != ref_value], ordered=True)     
-
-#     # Encode categorical predictors
-#     df, _ = encode_categorical_columns(df, categorical_predictors)
-
-#     X = df.drop(columns=[outcome_column, 'outcome'])
-#     y = df['outcome']
-
-#     # Split the data into training and test sets
-#     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
-
-#     # Initialize and train the Random Forest model
-#     model = RandomForestClassifier(random_state=random_state)
-#     model.fit(X_train, y_train)
-
-#     # Predictions
-#     y_pred = model.predict(X_test)
-#     y_pred_proba = model.predict_proba(X_test)[:, 1]
-
-#     # Evaluation metrics
-#     print("\nClassification Report:")
-#     print(classification_report(y_test, y_pred))
-    
-#     print("\nConfusion Matrix:")
-#     print(confusion_matrix(y_test, y_pred))
-
-#     roc_auc = roc_auc_score(y_test, y_pred_proba)
-#     print(f"\nROC AUC Score: {roc_auc:.3f}")
-
-#     # Feature importance
-#     importances = model.feature_importances_
-#     feature_importance = pd.DataFrame({'Feature': X.columns, 'Importance': importances})
-#     feature_importance = feature_importance.sort_values(by='Importance', ascending=False)
-
-#     print("\nFeature Importance:")
-#     print(feature_importance)
-    
-#     # Optionally save the results
-#     # add_to_docx(feature_importance, table_name, output_dir='output/analyse')
-
-# # Example usage
-# # random_forest_analysis(df_logis, outcome_column, outcome_choice, predictors, reference_group)
-
-    
-#     # Optionally save the results
-#     # add_to_docx(feature_importance, table_name, output_dir='output/analyse')
-
-# # Example usage
-# # random_forest_analysis(df_logis, outcome_column, outcome_choice, predictors, reference_group)
+        return summary_df

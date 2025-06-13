@@ -26,6 +26,7 @@ git clone https://github.com/Ramathibodi-HPSR/Prehos.git
 cd Prehos
 python -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
+pip install -r scripts/requirements.txt # install necessary packages
 jupyter notebook
 ```
 

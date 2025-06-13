@@ -1,0 +1,15 @@
+# Utilities
+pandas
+numpy
+matplotlib
+tqdm
+
+# Data Processing
+tabulate
+openpyxl
+scikit-learn
+statsmodels
+
+# Data Analysis
+python-docx
+pingouin

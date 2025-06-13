@@ -116,10 +116,11 @@ class DataHandler:
             'Index': [],
             'Source Name': [],
             'Column Name': [],
-            'Column Label': [],
             'Data Type': [],
             'Required': [],
             'Unique': [],
+            'Map': [],
+            'OutlierDetect': [],
             'Range': [],
             'Min': [],
             'Max': [],
@@ -161,7 +162,8 @@ class DataHandler:
             # Append None for other properties
             data_dict['Include'].append(None)
             data_dict['Column Name'].append(None)
-            data_dict['Column Label'].append(None)
+            data_dict['Map'].append(None)
+            data_dict['OutlierDetect'].append(None)
             data_dict['Regex Pattern'].append(None)
             data_dict['Default Value'].append(None)
             data_dict['Null Value'].append(None)
